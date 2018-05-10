@@ -1,0 +1,8 @@
+---
+wp_installation_dir: '/var/www/html/mywebsite'
+wp_theme_name: mywebsite
+wp_db_name: mywebsite
+
+db_host: localhost
+db_username: root
+db_user_password: supersecret

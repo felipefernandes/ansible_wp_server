@@ -1,0 +1,119 @@
+---
+- hosts: all
+  gather_facts: False
+  become: true
+
+  pre_tasks:
+  - name: Instala python2 para o Ansible
+    raw: bash -c "test -e /usr/bin/python || (apt -qqy update && apt install -qqy python-minimal)"
+    register: output
+    changed_when:
+    - output.stdout != ""
+    - output.stdout != "\r\n"
+  - name: Gathering Facts
+    setup:
+
+- hosts: production
+  handlers:
+    - name: restart apache
+      service:
+        name: apache2
+        state: restarted
+      become: yes
+
+  tasks:
+    #SO Preparing
+    - name: 'Instala pacote de dependências do SO'
+      apt:
+        name: "{{ item }}"
+        state: latest
+        update_cache: true
+      become: yes
+      with_items:        
+        - apache2
+        - php
+        - libapache2-mod-php
+        - php-gd
+        - php-mcrypt
+        - php-mysql
+        - mysql-server
+        - mysql-client
+        - mysql-common
+        - python-mysqldb   
+
+    # Apache 2 Modules
+    - name: Habilita modulos apache2
+      command: a2enmod rewrite actions alias proxy_fcgi  
+      become: yes      
+      notify:
+        - restart apache
+
+    - name: 'Configura Apache para servir o Wordpress'
+      template:
+        src: 'templates/000-default.conf.j2'
+        dest: '/etc/apache2/sites-available/000-default.conf'
+      become: yes
+      notify:
+        - restart apache
+
+    # Banco de Dados
+    - name: 'Cria o banco MySQL para o projeto'
+      mysql_db:
+        name: "{{ wp_db_name }}"
+        login_user: root
+        login_password: "{{ db_user_password }}"
+        state: present    
+
+    # Wordpress
+    - name: 'Baixa o arquivo de instalacao do Wordpress'
+      get_url: 
+        url: 'https://wordpress.org/latest.tar.gz'
+        dest: '/tmp/wordpress.tar.gz'
+
+    - name: 'Descompacta o Wordpress'
+      unarchive:
+        src: '/tmp/wordpress.tar.gz'
+        dest: '/tmp'
+        remote_src: yes
+      become: yes
+
+    - name: 'Copia o resultado do unarchive para o local correto'
+      command: cp -a /tmp/wordpress/. "{{ wp_installation_dir }}"      
+      become: yes
+
+    - name: 'Prepara o arquivo wp-config'
+      copy:
+        src: '{{ wp_installation_dir }}/wp-config-sample.php'
+        dest: '{{ wp_installation_dir }}/wp-config.php'
+        remote_src: yes
+      become: yes
+
+    - name: 'Configura o wp-config com as entradas do banco de dados'
+      replace:
+        path: '{{ wp_installation_dir }}/wp-config.php'
+        regexp: "{{ item.regex }}"
+        replace: "{{ item.value }}"
+      with_items:
+        - { regex: 'localhost', value: '{{ db_host }}' }
+        - { regex: 'database_name_here', value: '{{ wp_db_name }}' }
+        - { regex: 'username_here', value: '{{ db_username }}' }
+        - { regex: 'password_here', value: '{{ db_user_password }}' }
+      become: yes
+
+    - name: 'Cria o diretorio do tema'
+      file: 
+        path: "{{ wp_installation_dir }}/wp-content/themes/{{ wp_theme_name }}" 
+        state: directory      
+      become: yes
+
+    # Corrige permissões de pastas e arquvos para o Wordpress
+    - name: 'Copia script de correção de permissões do WP para server'
+      copy:
+        src: 'files/wp-fix-permissions.sh'
+        dest: '/root/wp-fix-permissions.sh'
+        mode: +x
+      become: yes
+
+    - name: 'Roda script de correção de permissões'
+      command: sh /root/wp-fix-permissions.sh "{{ wp_installation_dir }}"
+      become: yes
